@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TradeSensei
+
+**AI-powered trading signal intelligence, driven by real-time news.**
+
+TradeSensei monitors the latest news across stocks, ETFs, and crypto, runs each article through GPT-4o-mini sentiment analysis, and distills everything into a BUY / SELL / HOLD signal with a confidence score and plain-English reasoning — refreshed on demand.
+
+---
+
+## Tech Stack
+
+- [Next.js 14](https://nextjs.org) — App Router, TypeScript
+- [Tailwind CSS](https://tailwindcss.com) — dark-first styling
+- [Prisma](https://prisma.io) + SQLite — local database
+- [OpenAI API](https://platform.openai.com) — GPT-4o-mini for sentiment analysis
+- [NewsAPI](https://newsapi.org) — real-time news ingestion
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### 1. Clone and install
+
+```bash
+git clone https://github.com/Jamesh311/tradesensei.git
+cd tradesensei
+npm install
+```
+
+### 2. Configure environment variables
+
+Create a `.env.local` file in the project root:
+
+```env
+DATABASE_URL="file:./prisma/dev.db"
+NEWSAPI_KEY=your_newsapi_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+- **NEWSAPI_KEY** — free tier available at [newsapi.org/register](https://newsapi.org/register)
+- **OPENAI_API_KEY** — get yours at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+
+### 3. Set up the database
+
+```bash
+npx prisma db push
+```
+
+### 4. Seed with starter tickers
+
+```bash
+npm run seed
+```
+
+This populates the database with AAPL, BTC, SPY, and NVDA.
+
+### 5. Run the dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Features (v1)
 
-## Learn More
+- **Watchlist** — add any stock ticker, ETF, or crypto asset
+- **News ingestion** — fetches the last 24 hours of articles per ticker via NewsAPI
+- **AI analysis** — GPT-4o-mini reads the headlines and generates a structured signal
+- **Signal cards** — BUY / SELL / HOLD with confidence percentage and reasoning
+- **On-demand refresh** — re-run analysis for all tickers with one click
+- **Per-ticker refresh** — coming from the card (see below)
+- **Article deduplication** — previously seen articles are not re-stored on refresh
+- **No-news fallback** — gracefully returns a HOLD / 50% signal when no articles are found
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Coming Soon
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Per-card manual refresh button
+- Price data overlay (Alpaca for stocks/ETFs, CoinGecko for crypto)
+- Signal history chart per ticker
+- Auto-refresh on a configurable interval (e.g. every 15 minutes)
+- Email or browser push alerts on signal changes
+- Filtering and sorting by signal type or confidence
+- Multi-user watchlists with authentication
