@@ -1,35 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-
-const ACTIONS = ['BUY', 'SELL', 'HOLD'] as const
-
-const REASONING: Record<typeof ACTIONS[number], string[]> = {
-  BUY: [
-    'Strong positive sentiment detected across 12 news sources. Earnings beat expectations by 8%.',
-    'Bullish momentum building with multiple analyst upgrades. Price target raised by three major firms in the last 24h.',
-    'Volume spike detected alongside positive news flow. Institutional accumulation pattern observed in recent sessions.',
-    'Macro tailwinds aligned with sector rotation into growth. Sentiment index hit 3-month high.',
-    'Positive earnings surprise with revenue above consensus by 6.4%. Forward guidance raised.',
-  ],
-  SELL: [
-    'Negative sentiment surge across major news sources. Revenue guidance cut, margin pressure mounting.',
-    'Bearish divergence detected — price at resistance while sentiment deteriorates. Sector rotation out of growth.',
-    'Multiple risk factors flagged: regulatory headwinds, insider selling detected, short interest rising.',
-    'Earnings miss combined with lowered forward guidance. Three analysts downgraded the stock today.',
-    'Macro headwinds increasing. Credit conditions tightening; historically negative for this asset class.',
-  ],
-  HOLD: [
-    'Mixed signals across sources. No strong directional catalyst detected in recent news flow.',
-    'Market uncertainty elevated. Conflicting data points — awaiting clearer signal before positioning.',
-    'Balanced bullish/bearish news coverage with no dominant trend. Confidence too low to commit.',
-    'Price in consolidation zone. Sentiment neutral; recommend waiting for breakout confirmation.',
-    'Insufficient data for high-confidence signal. News volume low for this ticker in the past 24h.',
-  ],
-}
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
-}
+import { fetchNews } from '@/lib/newsapi'
+import { analyzeAndGenerateSignal } from '@/lib/openai'
 
 export async function POST(request: Request) {
   const { tickerId } = await request.json()
@@ -38,12 +10,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'tickerId is required' }, { status: 400 })
   }
 
-  const action = pick(ACTIONS)
-  const confidence = Math.floor(Math.random() * 46) + 50 // 50–95
-  const reasoning = pick(REASONING[action])
+  const ticker = await prisma.ticker.findUnique({ where: { id: tickerId } })
+  if (!ticker) {
+    return NextResponse.json({ error: 'Ticker not found' }, { status: 404 })
+  }
 
+  // 1. Fetch news from NewsAPI
+  let articles = await fetchNews(ticker.symbol, ticker.name, ticker.type)
+
+  // 2. If no news found, generate a low-confidence HOLD signal
+  if (articles.length === 0) {
+    const signal = await prisma.signal.create({
+      data: {
+        tickerId,
+        action: 'HOLD',
+        confidence: 50,
+        reasoning: `No recent news found for ${ticker.symbol} in the last 24 hours. Insufficient data for a directional signal.`,
+      },
+    })
+    return NextResponse.json(signal, { status: 201 })
+  }
+
+  // 3. Run AI analysis
+  const result = await analyzeAndGenerateSignal(ticker.symbol, ticker.name, articles)
+
+  // 4. Save articles to DB (skip duplicates by URL)
+  const existingRows = await prisma.article.findMany({
+    where: { tickerId, url: { in: articles.map((a) => a.url) } },
+    select: { url: true },
+  })
+  const existingUrls = new Set(existingRows.map((r: { url: string }) => r.url))
+
+  const newArticles = articles.filter((a) => !existingUrls.has(a.url))
+  if (newArticles.length > 0) {
+    await prisma.article.createMany({
+      data: newArticles.map((a) => ({
+        tickerId,
+        title: a.title,
+        url: a.url,
+        source: a.source,
+        publishedAt: new Date(a.publishedAt),
+      })),
+    })
+  }
+
+  // 5. Save signal
   const signal = await prisma.signal.create({
-    data: { tickerId, action, confidence, reasoning },
+    data: {
+      tickerId,
+      action: result.action,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+    },
   })
 
   return NextResponse.json(signal, { status: 201 })
