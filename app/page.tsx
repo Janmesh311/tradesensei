@@ -18,24 +18,32 @@ type Ticker = {
   signals: Signal[]
 }
 
+type PriceData = {
+  price: number | null
+  changePercent: number | null
+}
+
 const SIGNAL_STYLES = {
   BUY: {
     text: 'text-green-400',
     bg: 'bg-green-500/10',
     dot: 'bg-green-400',
     bar: 'bg-green-500',
+    badge: 'bg-green-500/20 text-green-400',
   },
   SELL: {
     text: 'text-red-400',
     bg: 'bg-red-500/10',
     dot: 'bg-red-400',
     bar: 'bg-red-500',
+    badge: 'bg-red-500/20 text-red-400',
   },
   HOLD: {
     text: 'text-zinc-400',
     bg: 'bg-zinc-500/10',
     dot: 'bg-zinc-500',
     bar: 'bg-zinc-500',
+    badge: 'bg-zinc-700/50 text-zinc-400',
   },
 }
 
@@ -55,6 +63,19 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
+function formatPrice(price: number | null): string {
+  if (price === null) return 'N/A'
+  if (price >= 1000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  if (price >= 1) return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `$${price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`
+}
+
+function formatChange(changePercent: number | null): string {
+  if (changePercent === null) return ''
+  const sign = changePercent >= 0 ? '+' : ''
+  return `${sign}${changePercent.toFixed(2)}%`
+}
+
 export default function Dashboard() {
   const [tickers, setTickers] = useState<Ticker[]>([])
   const [loading, setLoading] = useState(true)
@@ -67,16 +88,54 @@ export default function Dashboard() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set())
 
+  const [prices, setPrices] = useState<Record<string, PriceData>>({})
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set())
+  const [signalHistory, setSignalHistory] = useState<Record<string, Signal[]>>({})
+  const [loadingHistory, setLoadingHistory] = useState<Set<string>>(new Set())
+
   const fetchTickers = useCallback(async () => {
     const res = await fetch('/api/tickers')
-    const data = await res.json()
+    const data: Ticker[] = await res.json()
     setTickers(data)
     setLastRefreshed(new Date())
+    return data
+  }, [])
+
+  const fetchPrices = useCallback(async (tickerList: Ticker[]) => {
+    if (tickerList.length === 0) return
+    const param = tickerList.map((t) => `${t.symbol}:${t.type}`).join(',')
+    try {
+      const res = await fetch(`/api/prices?tickers=${encodeURIComponent(param)}`)
+      const data = await res.json()
+      setPrices(data)
+    } catch {
+      // fail silently — prices show N/A
+    }
   }, [])
 
   useEffect(() => {
-    fetchTickers().finally(() => setLoading(false))
-  }, [fetchTickers])
+    fetchTickers()
+      .then((data) => fetchPrices(data))
+      .finally(() => setLoading(false))
+  }, [fetchTickers, fetchPrices])
+
+  async function toggleHistory(tickerId: string) {
+    if (expandedHistory.has(tickerId)) {
+      setExpandedHistory((prev) => { const s = new Set(prev); s.delete(tickerId); return s })
+      return
+    }
+    setLoadingHistory((prev) => new Set(prev).add(tickerId))
+    try {
+      const res = await fetch(`/api/tickers/${tickerId}/signals`)
+      const data: Signal[] = await res.json()
+      setSignalHistory((prev) => ({ ...prev, [tickerId]: data }))
+    } catch {
+      setSignalHistory((prev) => ({ ...prev, [tickerId]: [] }))
+    } finally {
+      setLoadingHistory((prev) => { const s = new Set(prev); s.delete(tickerId); return s })
+      setExpandedHistory((prev) => new Set(prev).add(tickerId))
+    }
+  }
 
   async function addTicker() {
     if (!symbol.trim() || !name.trim()) return
@@ -93,7 +152,8 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickerId: ticker.id }),
       })
-      await fetchTickers()
+      const data = await fetchTickers()
+      await fetchPrices(data)
       setSymbol('')
       setName('')
       setType('stock')
@@ -117,7 +177,11 @@ export default function Dashboard() {
           })
         )
       )
-      await fetchTickers()
+      const data = await fetchTickers()
+      await fetchPrices(data)
+      // Clear cached history so it reloads fresh on next expand
+      setSignalHistory({})
+      setExpandedHistory(new Set())
     } finally {
       setRefreshing(false)
       setRefreshingIds(new Set())
@@ -296,62 +360,127 @@ export default function Dashboard() {
               const signal = ticker.signals[0]
               const styles = signal ? SIGNAL_STYLES[signal.action] : SIGNAL_STYLES.HOLD
               const isRefreshing = refreshingIds.has(ticker.id)
+              const priceData = prices[ticker.symbol]
+              const historyOpen = expandedHistory.has(ticker.id)
+              const historyLoading = loadingHistory.has(ticker.id)
+              const history = signalHistory[ticker.id] ?? []
 
               return (
                 <div
                   key={ticker.id}
-                  className={`p-4 rounded-xl border border-zinc-800 bg-zinc-900 hover:border-zinc-700 transition-all duration-200 ${
+                  className={`rounded-xl border border-zinc-800 bg-zinc-900 hover:border-zinc-700 transition-all duration-200 ${
                     isRefreshing ? 'opacity-50' : ''
                   }`}
                 >
-                  {/* Symbol + type */}
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-base font-bold font-mono tracking-tight">{ticker.symbol}</span>
-                    <span
-                      className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
-                        TYPE_STYLES[ticker.type] ?? 'bg-zinc-700 text-zinc-400'
-                      }`}
+                  <div className="p-4">
+                    {/* Symbol + type */}
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-base font-bold font-mono tracking-tight">{ticker.symbol}</span>
+                      <span
+                        className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                          TYPE_STYLES[ticker.type] ?? 'bg-zinc-700 text-zinc-400'
+                        }`}
+                      >
+                        {ticker.type}
+                      </span>
+                    </div>
+
+                    {/* Name */}
+                    <div className="text-xs text-zinc-600 mb-3 truncate">{ticker.name}</div>
+
+                    {/* Price */}
+                    <div className="flex items-baseline gap-2 mb-4">
+                      <span className="text-xl font-bold font-mono tracking-tight">
+                        {priceData ? formatPrice(priceData.price) : <span className="text-zinc-700">—</span>}
+                      </span>
+                      {priceData?.changePercent !== null && priceData?.changePercent !== undefined && (
+                        <span
+                          className={`text-xs font-mono font-semibold ${
+                            priceData.changePercent >= 0 ? 'text-green-400' : 'text-red-400'
+                          }`}
+                        >
+                          {formatChange(priceData.changePercent)}
+                        </span>
+                      )}
+                      {priceData === undefined && (
+                        <span className="text-[10px] text-zinc-700">loading...</span>
+                      )}
+                    </div>
+
+                    {signal ? (
+                      <>
+                        {/* Signal badge */}
+                        <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg mb-2 ${styles.bg}`}>
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${styles.dot}`} />
+                          <span className={`text-sm font-bold tracking-widest ${styles.text}`}>
+                            {signal.action}
+                          </span>
+                          <span className={`ml-auto text-sm font-mono font-bold ${styles.text}`}>
+                            {signal.confidence}%
+                          </span>
+                        </div>
+
+                        {/* Confidence bar */}
+                        <div className="h-px bg-zinc-800 rounded-full mb-3 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${styles.bar}`}
+                            style={{ width: `${signal.confidence}%` }}
+                          />
+                        </div>
+
+                        {/* Reasoning — full text, no truncation */}
+                        <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+                          {signal.reasoning}
+                        </p>
+
+                        {/* Timestamp */}
+                        <div className="text-[10px] text-zinc-700 font-mono mb-3">
+                          {timeAgo(signal.createdAt)}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-xs text-zinc-700 py-6 text-center mb-3">No signal yet</div>
+                    )}
+
+                    {/* History toggle */}
+                    <button
+                      onClick={() => toggleHistory(ticker.id)}
+                      className="w-full text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors uppercase tracking-widest py-1 border-t border-zinc-800 flex items-center justify-center gap-1.5"
                     >
-                      {ticker.type}
-                    </span>
+                      {historyLoading ? (
+                        <span>Loading...</span>
+                      ) : (
+                        <>
+                          <span>{historyOpen ? '▲' : '▼'}</span>
+                          <span>{historyOpen ? 'Hide' : 'History'}</span>
+                        </>
+                      )}
+                    </button>
                   </div>
 
-                  {/* Name */}
-                  <div className="text-xs text-zinc-600 mb-4 truncate">{ticker.name}</div>
-
-                  {signal ? (
-                    <>
-                      {/* Signal badge */}
-                      <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg mb-2 ${styles.bg}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${styles.dot}`} />
-                        <span className={`text-sm font-bold tracking-widest ${styles.text}`}>
-                          {signal.action}
-                        </span>
-                        <span className={`ml-auto text-sm font-mono font-bold ${styles.text}`}>
-                          {signal.confidence}%
-                        </span>
-                      </div>
-
-                      {/* Confidence bar */}
-                      <div className="h-px bg-zinc-800 rounded-full mb-3 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${styles.bar}`}
-                          style={{ width: `${signal.confidence}%` }}
-                        />
-                      </div>
-
-                      {/* Reasoning */}
-                      <p className="text-[11px] text-zinc-500 leading-relaxed mb-3 line-clamp-3">
-                        {signal.reasoning}
-                      </p>
-
-                      {/* Timestamp */}
-                      <div className="text-[10px] text-zinc-700 font-mono">
-                        {timeAgo(signal.createdAt)}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-xs text-zinc-700 py-6 text-center">No signal yet</div>
+                  {/* Signal history panel */}
+                  {historyOpen && (
+                    <div className="border-t border-zinc-800 px-4 py-3 space-y-3">
+                      {history.length === 0 ? (
+                        <p className="text-[11px] text-zinc-700 text-center py-2">No history yet</p>
+                      ) : (
+                        history.map((s, i) => {
+                          const hs = SIGNAL_STYLES[s.action]
+                          return (
+                            <div key={s.id} className={`text-[11px] ${i > 0 ? 'border-t border-zinc-800/60 pt-3' : ''}`}>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`font-bold tracking-widest text-[10px] px-1.5 py-0.5 rounded ${hs.badge}`}>
+                                  {s.action}
+                                </span>
+                                <span className={`font-mono font-semibold ${hs.text}`}>{s.confidence}%</span>
+                                <span className="text-zinc-700 font-mono ml-auto">{timeAgo(s.createdAt)}</span>
+                              </div>
+                              <p className="text-zinc-600 leading-relaxed">{s.reasoning}</p>
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
                   )}
                 </div>
               )

@@ -7,6 +7,9 @@ const TICKERS = [
   { symbol: 'BTC', name: 'Bitcoin', type: 'crypto' },
   { symbol: 'SPY', name: 'S&P 500 ETF', type: 'etf' },
   { symbol: 'NVDA', name: 'NVIDIA Corporation', type: 'stock' },
+  { symbol: 'ETH', name: 'Ethereum', type: 'crypto' },
+  { symbol: 'TSLA', name: 'Tesla Inc.', type: 'stock' },
+  { symbol: 'AMZN', name: 'Amazon.com Inc.', type: 'stock' },
 ]
 
 const REASONING = {
